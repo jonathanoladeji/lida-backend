@@ -1,95 +1,71 @@
+require('dotenv').config();
 const express = require('express');
-const router = express.Router();
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
-const { protect } = require('../middleware/auth');
+const mongoose = require('mongoose');
+const cors = require('cors');
 
-const signToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
+const authRoutes = require('./routes/auth');
+const communityRoutes = require('./routes/communities');
+const postRoutes = require('./routes/posts');
+const issueRoutes = require('./routes/issues');
+const pollRoutes = require('./routes/polls');
+const announcementRoutes = require('./routes/announcements');
+const adminRoutes = require('./routes/admin');
+const memberRoutes = require('./routes/members');
+const commentRoutes = require('./routes/comments');
+const moderationRoutes = require('./routes/moderation');
 
-// POST /api/auth/signup
-router.post('/signup', async (req, res, next) => {
-  try {
-    const {
-      full_name, fullName,
-      email, password,
-      phone_number, phoneNumber,
-      state, lga,
-      community_name, neighbourhood,
-      address_description, addressDescription,
-      agreed_to_rules, agreedToRules,
-    } = req.body;
+const app = express();
 
-    const resolvedAgreed = agreed_to_rules || agreedToRules;
-    if (!resolvedAgreed) {
-      return res.status(400).json({ message: 'You must agree to community rules to register' });
-    }
+const corsOptions = {
+  origin: function (origin, callback) {
+    callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
 
-    const existing = await User.findOne({ email });
-    if (existing) return res.status(400).json({ message: 'Email already registered' });
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
-    const user = await User.create({
-      fullName: full_name || fullName,
-      email,
-      password,
-      phoneNumber: phone_number || phoneNumber,
-      state,
-      lga,
-      neighbourhood: community_name || neighbourhood,
-      addressDescription: address_description || addressDescription,
-      agreedToRules: resolvedAgreed,
-    });
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
 
-    const token = signToken(user._id);
-    res.status(201).json({ token, user });
-  } catch (err) {
-    next(err);
-  }
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Lida API is running' });
 });
 
-// POST /api/auth/login
-router.post('/login', async (req, res, next) => {
-  try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ message: 'Email and password required' });
-    const user = await User.findOne({ email }).select('+password');
-    if (!user || !(await user.comparePassword(password))) {
-      return res.status(401).json({ message: 'Invalid email or password' });
-    }
-    if (user.isSuspended) return res.status(403).json({ message: `Account suspended: ${user.suspendedReason}` });
-    const token = signToken(user._id);
-    res.json({ token, user });
-  } catch (err) {
-    next(err);
-  }
+app.use('/api/auth', authRoutes);
+app.use('/api/communities', communityRoutes);
+app.use('/api/posts', postRoutes);
+app.use('/api/issues', issueRoutes);
+app.use('/api/polls', pollRoutes);
+app.use('/api/announcements', announcementRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/members', memberRoutes);
+app.use('/api/comments', commentRoutes);
+app.use('/api/moderation', moderationRoutes);
+
+app.use((req, res) => {
+  res.status(404).json({ message: 'Route not found' });
 });
 
-// POST /api/auth/logout
-router.post('/logout', (req, res) => {
-  res.json({ message: 'Logged out' });
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(err.status || 500).json({ message: err.message || 'Internal server error' });
 });
 
-// POST /api/auth/google/session - not supported
-router.post('/google/session', (req, res) => {
-  res.status(400).json({ message: 'Google login is not supported. Please use email and password.' });
-});
+const PORT = process.env.PORT || 5000;
 
-// GET /api/auth/me
-router.get('/me', protect, (req, res) => {
-  res.json({ user: req.user });
-});
-
-// PATCH /api/auth/me
-router.patch('/me', protect, async (req, res, next) => {
-  try {
-    const allowed = ['fullName', 'phoneNumber', 'state', 'lga', 'neighbourhood', 'addressDescription', 'avatar'];
-    const updates = {};
-    allowed.forEach(field => { if (req.body[field] !== undefined) updates[field] = req.body[field]; });
-    const user = await User.findByIdAndUpdate(req.user._id, updates, { new: true });
-    res.json({ user });
-  } catch (err) {
-    next(err);
-  }
-});
-
-module.exports = router;
+mongoose
+  .connect(process.env.MONGODB_URI)
+  .then(async () => {
+    console.log('MongoDB connected');
+    const { seedDatabase } = require('./seed');
+    await seedDatabase();
+    app.listen(PORT, () => console.log(`Lida API running on port ${PORT}`));
+  })
+  .catch((err) => {
+    console.error('MongoDB connection error:', err);
+    process.exit(1);
+  });
