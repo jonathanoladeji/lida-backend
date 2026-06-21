@@ -10,13 +10,36 @@ const signToken = (id) =>
 // POST /api/auth/signup
 router.post('/signup', async (req, res, next) => {
   try {
-    const { fullName, email, password, phoneNumber, state, lga, neighbourhood, addressDescription, agreedToRules } = req.body;
-    if (!agreedToRules) {
+    const {
+      full_name, fullName,
+      email, password,
+      phone_number, phoneNumber,
+      state, lga,
+      community_name, neighbourhood,
+      address_description, addressDescription,
+      agreed_to_rules, agreedToRules,
+    } = req.body;
+
+    const resolvedAgreed = agreed_to_rules || agreedToRules;
+    if (!resolvedAgreed) {
       return res.status(400).json({ message: 'You must agree to community rules to register' });
     }
+
     const existing = await User.findOne({ email });
     if (existing) return res.status(400).json({ message: 'Email already registered' });
-    const user = await User.create({ fullName, email, password, phoneNumber, state, lga, neighbourhood, addressDescription, agreedToRules });
+
+    const user = await User.create({
+      fullName: full_name || fullName,
+      email,
+      password,
+      phoneNumber: phone_number || phoneNumber,
+      state,
+      lga,
+      neighbourhood: community_name || neighbourhood,
+      addressDescription: address_description || addressDescription,
+      agreedToRules: resolvedAgreed,
+    });
+
     const token = signToken(user._id);
     res.status(201).json({ token, user });
   } catch (err) {
@@ -46,7 +69,7 @@ router.post('/logout', (req, res) => {
   res.json({ message: 'Logged out' });
 });
 
-// POST /api/auth/google/session - stub (not supported)
+// POST /api/auth/google/session - not supported
 router.post('/google/session', (req, res) => {
   res.status(400).json({ message: 'Google login is not supported. Please use email and password.' });
 });
