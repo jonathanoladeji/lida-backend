@@ -2,9 +2,9 @@ const express = require('express');
 const router = express.Router();
 const Community = require('../models/Community');
 const Membership = require('../models/Membership');
-const { protect, requireMembership, requireModerator } = require('../middleware/auth');
+const { protect, requireModerator } = require('../middleware/auth');
 
-// GET /api/communities - search/explore
+// GET /api/communities
 router.get('/', async (req, res, next) => {
   try {
     const { name, state, lga, keyword, page = 1, limit = 20 } = req.query;
@@ -16,13 +16,11 @@ router.get('/', async (req, res, next) => {
       { name: new RegExp(keyword, 'i') },
       { areaDescription: new RegExp(keyword, 'i') },
     ];
-
     const communities = await Community.find(query)
       .populate('creator', 'fullName')
       .sort({ memberCount: -1 })
       .skip((page - 1) * limit)
       .limit(Number(limit));
-
     const total = await Community.countDocuments(query);
     res.json({ communities, total, page: Number(page) });
   } catch (err) {
@@ -30,24 +28,20 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-// POST /api/communities - create
+// POST /api/communities
 router.post('/', protect, async (req, res, next) => {
   try {
     const { name, state, lga, areaDescription, type, rules, gpsLocation, inviteCode } = req.body;
-
     const community = await Community.create({
       name, state, lga, areaDescription, type, rules, gpsLocation, inviteCode,
       creator: req.user._id,
     });
-
-    // Creator becomes moderator
     await Membership.create({
       user: req.user._id,
       community: community._id,
       role: 'moderator',
       status: 'active',
     });
-
     res.status(201).json({ community });
   } catch (err) {
     next(err);
@@ -65,87 +59,46 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
+// GET /api/communities/:id/members
+router.get('/:id/members', protect, async (req, res, next) => {
+  try {
+    const members = await Membership.find({ community: req.params.id, status: 'active' })
+      .populate('user', 'fullName email neighbourhood state lga createdAt');
+    res.json({ members });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/communities/:id/join
 router.post('/:id/join', protect, async (req, res, next) => {
   try {
     const community = await Community.findById(req.params.id);
     if (!community) return res.status(404).json({ message: 'Community not found' });
     if (community.isSuspended) return res.status(403).json({ message: 'Community is suspended' });
-
     const existing = await Membership.findOne({ user: req.user._id, community: community._id });
     if (existing) return res.status(400).json({ message: 'Already a member or request pending' });
 
     let status = 'active';
     if (community.type === 'request-to-join') status = 'pending';
     if (community.type === 'invite-only') {
-      const { inviteCode } = req.body;
-      if (inviteCode !== community.inviteCode) {
+      if (req.body.inviteCode !== community.inviteCode) {
         return res.status(403).json({ message: 'Invalid invite code' });
       }
     }
-
     const membership = await Membership.create({
-      user: req.user._id,
-      community: community._id,
-      role: 'member',
-      status,
+      user: req.user._id, community: community._id, role: 'member', status,
     });
-
     if (status === 'active') {
       await Community.findByIdAndUpdate(community._id, { $inc: { memberCount: 1 } });
     }
-
     res.json({ membership, status });
   } catch (err) {
     next(err);
   }
 });
 
-// POST /api/communities/:communityId/join-requests/:userId/approve
-router.post('/:communityId/join-requests/:userId/approve', protect, requireModerator, async (req, res, next) => {
-  try {
-    const membership = await Membership.findOneAndUpdate(
-      { user: req.params.userId, community: req.params.communityId, status: 'pending' },
-      { status: 'active' },
-      { new: true }
-    );
-    if (!membership) return res.status(404).json({ message: 'Request not found' });
-    await Community.findByIdAndUpdate(req.params.communityId, { $inc: { memberCount: 1 } });
-    res.json({ membership });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/communities/:communityId/join-requests/:userId/reject
-router.post('/:communityId/join-requests/:userId/reject', protect, requireModerator, async (req, res, next) => {
-  try {
-    const membership = await Membership.findOneAndUpdate(
-      { user: req.params.userId, community: req.params.communityId, status: 'pending' },
-      { status: 'rejected' },
-      { new: true }
-    );
-    if (!membership) return res.status(404).json({ message: 'Request not found' });
-    res.json({ membership });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /api/communities/:communityId/join-requests
-router.get('/:communityId/join-requests', protect, requireModerator, async (req, res, next) => {
-  try {
-    const requests = await Membership.find({
-      community: req.params.communityId,
-      status: 'pending',
-    }).populate('user', 'fullName email neighbourhood state lga');
-    res.json({ requests });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// PATCH /api/communities/:id - edit community (moderator)
+// PATCH /api/communities/:id
 router.patch('/:id', protect, requireModerator, async (req, res, next) => {
   try {
     const allowed = ['name', 'areaDescription', 'type', 'rules', 'inviteCode', 'gpsLocation'];

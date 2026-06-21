@@ -3,19 +3,21 @@ const router = express.Router();
 const Post = require('../models/Post');
 const Community = require('../models/Community');
 const ReportFlag = require('../models/ReportFlag');
-const { protect, requireMembership, requireModerator } = require('../middleware/auth');
+const { protect } = require('../middleware/auth');
 
-// GET /api/posts/community/:communityId
-router.get('/community/:communityId', protect, requireMembership, async (req, res, next) => {
+// GET /api/posts?community_id=x
+router.get('/', protect, async (req, res, next) => {
   try {
-    const { page = 1, limit = 20 } = req.query;
-    const posts = await Post.find({ community: req.params.communityId, isHidden: false })
+    const { community_id, page = 1, limit = 20 } = req.query;
+    const query = { isHidden: false };
+    if (community_id) query.community = community_id;
+    const posts = await Post.find(query)
       .populate('author', 'fullName neighbourhood')
       .populate('comments.author', 'fullName')
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(Number(limit));
-    const total = await Post.countDocuments({ community: req.params.communityId, isHidden: false });
+    const total = await Post.countDocuments(query);
     res.json({ posts, total });
   } catch (err) {
     next(err);
@@ -53,15 +55,33 @@ router.post('/:id/like', protect, async (req, res, next) => {
   }
 });
 
-// POST /api/posts/:id/comments
-router.post('/:id/comments', protect, async (req, res, next) => {
+// GET /api/posts/:id/liked
+router.get('/:id/liked', protect, async (req, res, next) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: 'Post not found' });
-    post.comments.push({ author: req.user._id, text: req.body.text });
-    await post.save();
-    await post.populate('comments.author', 'fullName');
-    res.status(201).json({ comment: post.comments[post.comments.length - 1] });
+    const liked = post.likes.includes(req.user._id);
+    res.json({ liked });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/posts/:id/hide
+router.patch('/:id/hide', protect, async (req, res, next) => {
+  try {
+    const post = await Post.findByIdAndUpdate(req.params.id, { isHidden: true }, { new: true });
+    res.json({ post });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/posts/:id
+router.delete('/:id', protect, async (req, res, next) => {
+  try {
+    await Post.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Post deleted' });
   } catch (err) {
     next(err);
   }
@@ -80,31 +100,6 @@ router.post('/:id/report', protect, async (req, res, next) => {
       reason: req.body.reason,
     });
     res.json({ message: 'Post reported' });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// PATCH /api/posts/:id/hide (moderator)
-router.patch('/:id/hide', protect, async (req, res, next) => {
-  try {
-    const post = await Post.findByIdAndUpdate(req.params.id, { isHidden: req.body.isHidden ?? true }, { new: true });
-    res.json({ post });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// DELETE /api/posts/:id/comments/:commentId (moderator)
-router.delete('/:id/comments/:commentId', protect, async (req, res, next) => {
-  try {
-    const post = await Post.findById(req.params.id);
-    if (!post) return res.status(404).json({ message: 'Post not found' });
-    const comment = post.comments.id(req.params.commentId);
-    if (!comment) return res.status(404).json({ message: 'Comment not found' });
-    comment.isHidden = true;
-    await post.save();
-    res.json({ message: 'Comment hidden' });
   } catch (err) {
     next(err);
   }

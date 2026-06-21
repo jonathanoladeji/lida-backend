@@ -3,10 +3,13 @@ const router = express.Router();
 const { Poll, PollVote } = require('../models/Poll');
 const { protect } = require('../middleware/auth');
 
-// GET /api/polls/community/:communityId
-router.get('/community/:communityId', protect, async (req, res, next) => {
+// GET /api/polls?community_id=x
+router.get('/', protect, async (req, res, next) => {
   try {
-    const polls = await Poll.find({ community: req.params.communityId })
+    const { community_id } = req.query;
+    const query = {};
+    if (community_id) query.community = community_id;
+    const polls = await Poll.find(query)
       .populate('author', 'fullName')
       .sort({ createdAt: -1 });
     res.json({ polls });
@@ -20,12 +23,9 @@ router.post('/', protect, async (req, res, next) => {
   try {
     const { community, question, options, closingDate, isAnonymous, linkedIssue } = req.body;
     const poll = await Poll.create({
-      community,
-      question,
+      community, question,
       options: options.map(text => ({ text, votes: 0 })),
-      closingDate,
-      isAnonymous,
-      linkedIssue,
+      closingDate, isAnonymous, linkedIssue,
       author: req.user._id,
     });
     await poll.populate('author', 'fullName');
@@ -35,41 +35,23 @@ router.post('/', protect, async (req, res, next) => {
   }
 });
 
-// POST /api/polls/:id/vote
-router.post('/:id/vote', protect, async (req, res, next) => {
+// POST /api/polls/vote
+router.post('/vote', protect, async (req, res, next) => {
   try {
-    const poll = await Poll.findById(req.params.id);
+    const { poll_id, option_index } = req.body;
+    const poll = await Poll.findById(poll_id);
     if (!poll) return res.status(404).json({ message: 'Poll not found' });
     if (poll.isClosed || new Date() > poll.closingDate) {
-      poll.isClosed = true;
-      await poll.save();
       return res.status(400).json({ message: 'Poll is closed' });
     }
-
-    const { optionIndex } = req.body;
-    if (optionIndex < 0 || optionIndex >= poll.options.length) {
-      return res.status(400).json({ message: 'Invalid option' });
-    }
-
     const existing = await PollVote.findOne({ poll: poll._id, user: req.user._id });
     if (existing) return res.status(400).json({ message: 'Already voted' });
 
-    await PollVote.create({ poll: poll._id, user: req.user._id, optionIndex });
-    poll.options[optionIndex].votes += 1;
+    await PollVote.create({ poll: poll._id, user: req.user._id, optionIndex: option_index });
+    poll.options[option_index].votes += 1;
     poll.totalVotes += 1;
     await poll.save();
-
-    res.json({ poll, voted: true, optionIndex });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /api/polls/:id/my-vote
-router.get('/:id/my-vote', protect, async (req, res, next) => {
-  try {
-    const vote = await PollVote.findOne({ poll: req.params.id, user: req.user._id });
-    res.json({ vote: vote ? { optionIndex: vote.optionIndex } : null });
+    res.json({ poll, voted: true });
   } catch (err) {
     next(err);
   }

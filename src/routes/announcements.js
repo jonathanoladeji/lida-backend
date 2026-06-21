@@ -1,12 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const Announcement = require('../models/Announcement');
-const { protect, requireModerator } = require('../middleware/auth');
+const { protect } = require('../middleware/auth');
 
-// GET /api/announcements/community/:communityId
-router.get('/community/:communityId', protect, async (req, res, next) => {
+// GET /api/announcements?community_id=x
+router.get('/', protect, async (req, res, next) => {
   try {
-    const announcements = await Announcement.find({ community: req.params.communityId })
+    const { community_id } = req.query;
+    const query = {};
+    if (community_id) query.community = community_id;
+    const announcements = await Announcement.find(query)
       .populate('author', 'fullName')
       .sort({ isPinned: -1, createdAt: -1 });
     res.json({ announcements });
@@ -15,14 +18,12 @@ router.get('/community/:communityId', protect, async (req, res, next) => {
   }
 });
 
-// POST /api/announcements (moderator only)
+// POST /api/announcements
 router.post('/', protect, async (req, res, next) => {
   try {
     const { community, title, body } = req.body;
     const announcement = await Announcement.create({
-      community, title, body,
-      author: req.user._id,
-      isPinned: true,
+      community, title, body, author: req.user._id, isPinned: true,
     });
     await announcement.populate('author', 'fullName');
     res.status(201).json({ announcement });
@@ -31,13 +32,11 @@ router.post('/', protect, async (req, res, next) => {
   }
 });
 
-// PATCH /api/announcements/:id/pin (moderator)
+// PATCH /api/announcements/:id/pin
 router.patch('/:id/pin', protect, async (req, res, next) => {
   try {
     const announcement = await Announcement.findByIdAndUpdate(
-      req.params.id,
-      { isPinned: req.body.isPinned },
-      { new: true }
+      req.params.id, { isPinned: req.body.isPinned }, { new: true }
     );
     res.json({ announcement });
   } catch (err) {
@@ -45,11 +44,11 @@ router.patch('/:id/pin', protect, async (req, res, next) => {
   }
 });
 
-// DELETE /api/announcements/:id (moderator)
+// DELETE /api/announcements/:id
 router.delete('/:id', protect, async (req, res, next) => {
   try {
     await Announcement.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Announcement deleted' });
+    res.json({ message: 'Deleted' });
   } catch (err) {
     next(err);
   }
