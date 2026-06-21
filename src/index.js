@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
-const cors = require('cors');
 
 const authRoutes = require('./routes/auth');
 const communityRoutes = require('./routes/communities');
@@ -16,10 +15,15 @@ const moderationRoutes = require('./routes/moderation');
 
 const app = express();
 
-app.use(cors({
-  origin: true,
-  credentials: true,
-}));
+// Manual CORS — allows all origins with credentials
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
